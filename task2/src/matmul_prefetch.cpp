@@ -20,9 +20,14 @@ static float simd_dot(const float *row_A, const float *row_B, int K)
     }
 
     float lanes[8];
-    _mm256_store_ps(lanes, sum_vec);
+    _mm256_storeu_ps(lanes, sum_vec);
     float dot_product = 0.0f;
     for (int lane = 0; lane < 8; ++lane)
+    {
+        dot_product += lanes[lane];
+    }
+
+    for (; p < K; ++p)
     {
         dot_product += row_A[p] * row_B[p];
     }
@@ -54,9 +59,6 @@ void matmul_prefetch(const float *A, const float *B, float *C,
             }
         }
     }
-
-    std::cout << "\n"
-              << write_count << " for MXN " << (long)M * N << "\n";
 }
 
 void matmul_simd_baseline(const float *A, const float *B, float *C,

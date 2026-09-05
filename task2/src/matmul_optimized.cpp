@@ -10,9 +10,89 @@
 #include <immintrin.h>
 
 #include "matmul.h"
+#include <algorithm>
+
+
+static inline float sum_vector(__m256 vec) {
+
+   __m128 low = _mm256_castps256_ps128(vec);
+    __m128 high = _mm256_extractf128_ps(vec, 1);
+    __m128 sum = _mm_add_ps(low, high);
+    __m128 shuf = _mm_movehdup_ps(sum);
+    __m128 sum2 = _mm_add_ps(sum, shuf);
+    shuf = _mm_movehl_ps(shuf, sum2);
+    __m128 sum1 = _mm_add_ss(sum2, shuf);
+    return _mm_cvtss_f32(sum1);
+
+
+}
 
 void matmul_optimized(const float* A, const float* B, float* C,
                       int M, int N, int K, int lda, int ldb, int ldc) {
-    // TODO(student): replace this placeholder with your best combined implementation.
-    matmul_naive(A, B, C, M, N, K, lda, ldb, ldc);
+    
+    const int block_size = 32; // Example block size, can be tuned for performance
+
+
+    for(int i = 0; i < M; i++)
+            for(int j = 0; j < N; j++)
+                        C[i * ldc + j] = 0.0f;
+
+    
+     // Step 1: TILING.
+
+     for(int ii = 0; ii < M; ii += block_size){
+        int i_max = std::min(ii + block_size, M);
+
+        for(int jj = 0; jj < N; jj += block_size){
+            int j_max = std::min(jj + block_size, N);
+
+            for(int kk = 0; kk < K; kk += block_size){
+                int k_max = std::min(kk + block_size, K);
+
+                // Step 2: inside one small tile, do the actual multiply-add,
+                for(int i = ii; i < i_max; i++){
+                    const float* a_row = A + i * lda;
+
+                    for(int j = jj; j < j_max; j++){
+                        const float* b_row = B + j * ldb;
+
+                        // Step 3:  SIMD dot product over this K-chunk.
+                        __m256 acc = _mm256_setzero_ps();
+                        
+                        int k = kk;
+                        for(; k + 8 <= k_max; k += 8){
+                             // Step 4: PREFETCH -- ask for data 64 floats ahead
+                            _mm_prefetch(reinterpret_cast<const char*>(a_row + k + 64), _MM_HINT_T0);
+                            _mm_prefetch(reinterpret_cast<const char*>(b_row + k + 64), _MM_HINT_T0);
+
+                            __m256 a_vec = _mm256_loadu_ps(a_row + k);
+                            __m256 b_vec = _mm256_loadu_ps(b_row + k);
+                            acc = _mm256_fmadd_ps(a_vec, b_vec, acc);
+                        }
+                            float partial_sum = sum_vector(acc);
+
+                           // Step 5: leftover elements if k_end - kk wasn't a multiple of 8.
+
+                           for(; k < k_max; k++){
+                            partial_sum += a_row[k] * b_row[k];
+                           }
+
+                            // Step 6: add this K-chunk's contribution to C[i][j].
+                        C[i * ldc + j] += partial_sum;
+
+                        
+
+
+                    }
+                    
+
+                }
+
+            }
+        }
+     }
+
+
+
+    // matmul_naive(A, B, C, M, N, K, lda, ldb, ldc);
 }

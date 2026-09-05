@@ -56,28 +56,47 @@ void matmul_optimized(const float* A, const float* B, float* C,
                     for(int j = jj; j < j_max; j++){
                         const float* b_row = B + j * ldb;
 
-                        // Step 3:  SIMD dot product over this K-chunk.
-                        __m256 acc = _mm256_setzero_ps();
+                          // Step 3 + Step 3b (UNROLLING): two independent
+                        // accumulators, 16 floats processed per iteration
+                        // instead of 8, so the two FMAs below don't have
+                        // to wait on each other (breaks the dependency
+                        // chain -> more instruction-level parallelism).
+
+
+                         __m256 acc0 = _mm256_setzero_ps();
+                        __m256 acc1 = _mm256_setzero_ps();
                         
                         int k = kk;
-                        for(; k + 8 <= k_max; k += 8){
+                        for(; k + 16 <= k_max; k += 16){
                              // Step 4: PREFETCH -- ask for data 64 floats ahead
                             _mm_prefetch(reinterpret_cast<const char*>(a_row + k + 64), _MM_HINT_T0);
                             _mm_prefetch(reinterpret_cast<const char*>(b_row + k + 64), _MM_HINT_T0);
 
+                           __m256 a_vec0 = _mm256_loadu_ps(a_row + k);
+                            __m256 b_vec0 = _mm256_loadu_ps(b_row + k);
+                            acc0 = _mm256_fmadd_ps(a_vec0, b_vec0, acc0);
+ 
+                            __m256 a_vec1 = _mm256_loadu_ps(a_row + k + 8);
+                            __m256 b_vec1 = _mm256_loadu_ps(b_row + k + 8);
+                            acc1 = _mm256_fmadd_ps(a_vec1, b_vec1, acc1);
+                        }
+                            // Any remaining full 8-chunk that didn't fit the
+                        // 16-wide unrolled loop (i.e. k_max - k is 8..15).
+
+                           for (; k + 8 <= k_max; k += 8) {
                             __m256 a_vec = _mm256_loadu_ps(a_row + k);
                             __m256 b_vec = _mm256_loadu_ps(b_row + k);
-                            acc = _mm256_fmadd_ps(a_vec, b_vec, acc);
+                            acc0 = _mm256_fmadd_ps(a_vec, b_vec, acc0);
                         }
-                            float partial_sum = sum_vector(acc);
+                        float partial_sum = sum_vector(acc0) + sum_vector(acc1);
 
-                           // Step 5: leftover elements if k_end - kk wasn't a multiple of 8.
-
-                           for(; k < k_max; k++){
+                         // Step 5: leftover elements (< 8) that don't fill
+                        // a full vector.
+                         for (; k < k_max; k++) {
                             partial_sum += a_row[k] * b_row[k];
-                           }
+                        }
 
-                            // Step 6: add this K-chunk's contribution to C[i][j].
+                        // Step 6: add this K-chunk's contribution to C[i][j].
                         C[i * ldc + j] += partial_sum;
 
                         

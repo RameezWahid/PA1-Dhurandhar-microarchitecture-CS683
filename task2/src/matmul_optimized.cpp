@@ -30,7 +30,7 @@ static inline float sum_vector(__m256 vec) {
 void matmul_optimized(const float* A, const float* B, float* C,
                       int M, int N, int K, int lda, int ldb, int ldc) {
     
-    const int block_size = 32; // Example block size, can be tuned for performance
+    const int block_size = 64; // Example block size, can be tuned for performance
 
 
     for(int i = 0; i < M; i++)

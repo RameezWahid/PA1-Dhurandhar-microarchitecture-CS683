@@ -14,7 +14,6 @@ void conv_optimized(const float* in, float* out, const float* ker,
     const int in_stride = W + 2 * p;
 
     const int tile_h = 128;
-    const int tile_w = W;  // full width
 
     // Precompute vectorized weights to avoid repeated _mm256_set1_ps
     const int KK = K * K;

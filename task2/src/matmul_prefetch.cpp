@@ -5,7 +5,8 @@
 
 #include "matmul.h"
 
-static const int TILE = 64;
+static const int TILE = 48; // optimal cache sze 3 * sq(tiles) < cachesize l1d * 0.75 to prevent thrashing
+static const int PREFETCH_DISTANCE = 16;
 
 static float simd_dot(const float *row_A, const float *row_B, int K)
 {
@@ -14,6 +15,11 @@ static float simd_dot(const float *row_A, const float *row_B, int K)
     int p = 0;
     for (; p + 8 <= K; p += 8)
     {
+        if (p + PREFETCH_DISTANCE + 8 <= K)
+        {
+            _mm_prefetch(reinterpret_cast<const char *>(row_A + p + PREFETCH_DISTANCE), _MM_HINT_T0);
+            _mm_prefetch(reinterpret_cast<const char *>(row_B + p + PREFETCH_DISTANCE), _MM_HINT_T0);
+        }
         __m256 a_chunk = _mm256_loadu_ps(row_A + p);
         __m256 b_chunk = _mm256_loadu_ps(row_B + p);
         sum_vec = _mm256_fmadd_ps(a_chunk, b_chunk, sum_vec);

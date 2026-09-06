@@ -13,14 +13,7 @@ void conv_optimized(const float* in, float* out, const float* ker,
     const int p = K / 2;
     const int in_stride = W + 2 * p;
 
-    const int tile_h = 128;
-
-    // Precompute vectorized weights to avoid repeated _mm256_set1_ps
-    const int KK = K * K;
-    __m256 vweights[25]; // supports up to K=5
-    for (int i = 0; i < KK; ++i) {
-        vweights[i] = _mm256_set1_ps(ker[i]);
-    }
+    const int tile_h = 64;
 
     for (int oy0 = 0; oy0 < H; oy0 += tile_h) {
         const int y_end = oy0 + tile_h < H ? oy0 + tile_h : H;
@@ -36,16 +29,16 @@ void conv_optimized(const float* in, float* out, const float* ker,
                 __m256 vacc3 = _mm256_setzero_ps();
                 int wi = 0;
                 for (int ky = 0; ky < K; ++ky) {
+                    const float* in_ptr0 = in + (oy0 + oy + ky) * in_stride + ox;
+                    const float* in_ptr1 = in_ptr0 + in_stride;
+                    const float* in_ptr2 = in_ptr1 + in_stride;
+                    const float* in_ptr3 = in_ptr2 + in_stride;
                     for (int kx = 0; kx < K; ++kx) {
-                        const float* in_ptr0 = in + (oy0 + oy + ky) * in_stride + (ox + kx);
-                        const float* in_ptr1 = in + (oy0 + oy + 1 + ky) * in_stride + (ox + kx);
-                        const float* in_ptr2 = in + (oy0 + oy + 2 + ky) * in_stride + (ox + kx);
-                        const float* in_ptr3 = in + (oy0 + oy + 3 + ky) * in_stride + (ox + kx);
-                        __m256 vin0 = _mm256_loadu_ps(in_ptr0);
-                        __m256 vin1 = _mm256_loadu_ps(in_ptr1);
-                        __m256 vin2 = _mm256_loadu_ps(in_ptr2);
-                        __m256 vin3 = _mm256_loadu_ps(in_ptr3);
-                        __m256 vw = vweights[wi];
+                        __m256 vin0 = _mm256_loadu_ps(in_ptr0 + kx);
+                        __m256 vin1 = _mm256_loadu_ps(in_ptr1 + kx);
+                        __m256 vin2 = _mm256_loadu_ps(in_ptr2 + kx);
+                        __m256 vin3 = _mm256_loadu_ps(in_ptr3 + kx);
+                        __m256 vw = _mm256_set1_ps(ker[wi]);
                         vacc0 = _mm256_fmadd_ps(vin0, vw, vacc0);
                         vacc1 = _mm256_fmadd_ps(vin1, vw, vacc1);
                         vacc2 = _mm256_fmadd_ps(vin2, vw, vacc2);
@@ -94,10 +87,10 @@ void conv_optimized(const float* in, float* out, const float* ker,
                 __m256 vacc = _mm256_setzero_ps();
                 int wi = 0;
                 for (int ky = 0; ky < K; ++ky) {
+                    const float* in_ptr = in + (oy0 + oy + ky) * in_stride + ox;
                     for (int kx = 0; kx < K; ++kx) {
-                        const float* in_ptr = in + (oy0 + oy + ky) * in_stride + (ox + kx);
-                        __m256 vin = _mm256_loadu_ps(in_ptr);
-                        vacc = _mm256_fmadd_ps(vin, vweights[wi], vacc);
+                        __m256 vin = _mm256_loadu_ps(in_ptr + kx);
+                        vacc = _mm256_fmadd_ps(vin, _mm256_set1_ps(ker[wi]), vacc);
                         ++wi;
                     }
                 }

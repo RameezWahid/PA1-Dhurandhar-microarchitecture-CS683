@@ -8,10 +8,77 @@
 
 #include "convolution.h"
 
+// Set to 0 to benchmark the preserved generic no-ACC path for K=3.
+#ifndef CONV_USE_ACC_K3
+#define CONV_USE_ACC_K3 1
+#endif
+
+// Computes eight adjacent K=3 outputs.  Two independent accumulators shorten
+// the FMA dependency chain while keeping the source compact.
+static inline __m256 conv3_acc_vector(const float* r0, int stride,
+                                      __m256 w0, __m256 w1, __m256 w2,
+                                      __m256 w3, __m256 w4, __m256 w5,
+                                      __m256 w6, __m256 w7, __m256 w8) {
+    const float* r1 = r0 + stride;
+    const float* r2 = r1 + stride;
+    __m256 acc0 = _mm256_setzero_ps();
+    __m256 acc1 = _mm256_setzero_ps();
+    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(r0),     w0, acc0);
+    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(r0 + 1), w1, acc0);
+    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(r0 + 2), w2, acc0);
+    acc0 = _mm256_fmadd_ps(_mm256_loadu_ps(r1),     w3, acc0);
+    acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(r1 + 1), w4, acc1);
+    acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(r1 + 2), w5, acc1);
+    acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(r2),     w6, acc1);
+    acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(r2 + 1), w7, acc1);
+    acc1 = _mm256_fmadd_ps(_mm256_loadu_ps(r2 + 2), w8, acc1);
+    return _mm256_add_ps(acc0, acc1);
+}
+
 void conv_optimized(const float* in, float* out, const float* ker,
                     int H, int W, int K) {
     const int p = K / 2;
     const int in_stride = W + 2 * p;
+
+#if CONV_USE_ACC_K3
+    // K=3 ACC fast path 
+
+    if (K == 3) {
+        const __m256 w0 = _mm256_set1_ps(ker[0]);
+        const __m256 w1 = _mm256_set1_ps(ker[1]);
+        const __m256 w2 = _mm256_set1_ps(ker[2]);
+        const __m256 w3 = _mm256_set1_ps(ker[3]);
+        const __m256 w4 = _mm256_set1_ps(ker[4]);
+        const __m256 w5 = _mm256_set1_ps(ker[5]);
+        const __m256 w6 = _mm256_set1_ps(ker[6]);
+        const __m256 w7 = _mm256_set1_ps(ker[7]);
+        const __m256 w8 = _mm256_set1_ps(ker[8]);
+        int oy = 0;
+        for (; oy + 3 < H; oy += 4) {
+            for (int ox = 0; ox < W; ox += 8) {
+                const float* r0 = in + oy * in_stride + ox;
+                const __m256 a0 = conv3_acc_vector(r0, in_stride, w0, w1, w2, w3, w4, w5, w6, w7, w8);
+                const __m256 a1 = conv3_acc_vector(r0 + in_stride, in_stride, w0, w1, w2, w3, w4, w5, w6, w7, w8);
+                const __m256 a2 = conv3_acc_vector(r0 + 2 * in_stride, in_stride, w0, w1, w2, w3, w4, w5, w6, w7, w8);
+                const __m256 a3 = conv3_acc_vector(r0 + 3 * in_stride, in_stride, w0, w1, w2, w3, w4, w5, w6, w7, w8);
+                _mm256_storeu_ps(out + oy * W + ox, a0);
+                _mm256_storeu_ps(out + (oy + 1) * W + ox, a1);
+                _mm256_storeu_ps(out + (oy + 2) * W + ox, a2);
+                _mm256_storeu_ps(out + (oy + 3) * W + ox, a3);
+            }
+        }
+        for (; oy < H; ++oy) {
+            for (int ox = 0; ox < W; ox += 8) {
+                const __m256 a = conv3_acc_vector(in + oy * in_stride + ox, in_stride,
+                                                   w0, w1, w2, w3, w4, w5, w6, w7, w8);
+                _mm256_storeu_ps(out + oy * W + ox, a);
+            }
+        }
+        return;
+    }
+#endif
+
+    // Generic no-ACC strip-tiled AVX2 path 
 
     const int tile_h = 64;
 

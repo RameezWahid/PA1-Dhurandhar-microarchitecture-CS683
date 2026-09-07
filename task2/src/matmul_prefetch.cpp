@@ -23,7 +23,7 @@ static int get_prefetch_distance()
 
 // Reads PF_HINT from an environment variable and maps it to the matching
 // _MM_HINT_* constant. Accepts "T0", "T1", "T2", "NTA". Falls back to T0.
-static int get_prefetch_hint()
+static _mm_hint get_prefetch_hint()
 {
     const char *env_val = std::getenv("PF_HINT");
     if (env_val == nullptr)
@@ -44,7 +44,7 @@ static int get_prefetch_hint()
 }
 
 static float simd_dot(const float *row_A, const float *row_B, int K,
-                      int prefetch_distance, int prefetch_hint)
+                      int prefetch_distance, _mm_hint prefetch_hint)
 {
     __m256 sum_vec = _mm256_setzero_ps();
 
@@ -53,8 +53,28 @@ static float simd_dot(const float *row_A, const float *row_B, int K,
     {
         if (p + prefetch_distance + 8 <= K)
         {
-            _mm_prefetch(reinterpret_cast<const char *>(row_A + p + prefetch_distance), prefetch_hint);
-            _mm_prefetch(reinterpret_cast<const char *>(row_B + p + prefetch_distance), prefetch_hint);
+            const char *addr_a = reinterpret_cast<const char *>(row_A + p + prefetch_distance);
+            const char *addr_b = reinterpret_cast<const char *>(row_B + p + prefetch_distance);
+
+            switch (prefetch_hint)
+            {
+            case _MM_HINT_T0:
+                _mm_prefetch(addr_a, _MM_HINT_T0);
+                _mm_prefetch(addr_b, _MM_HINT_T0);
+                break;
+            case _MM_HINT_T1:
+                _mm_prefetch(addr_a, _MM_HINT_T1);
+                _mm_prefetch(addr_b, _MM_HINT_T1);
+                break;
+            case _MM_HINT_T2:
+                _mm_prefetch(addr_a, _MM_HINT_T2);
+                _mm_prefetch(addr_b, _MM_HINT_T2);
+                break;
+            case _MM_HINT_NTA:
+                _mm_prefetch(addr_a, _MM_HINT_NTA);
+                _mm_prefetch(addr_b, _MM_HINT_NTA);
+                break;
+            }
         }
 
         __m256 a_chunk = _mm256_loadu_ps(row_A + p);
@@ -82,7 +102,7 @@ void matmul_prefetch(const float *A, const float *B, float *C,
                      int M, int N, int K, int lda, int ldb, int ldc)
 {
     int prefetch_distance = get_prefetch_distance();
-    int prefetch_hint = get_prefetch_hint();
+    _mm_hint prefetch_hint = get_prefetch_hint();
 
     for (int i_tile = 0; i_tile < M; i_tile += TILE)
     {
